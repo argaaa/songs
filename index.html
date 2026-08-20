@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud Sheet Music Library</title>
+    <!-- abcjs for rendering sheet music -->
+    <script src="https://cdn.jsdelivr.net/npm/abcjs@6.4.0/dist/abcjs-basic-min.js"></script>
+    <!-- Supabase JS Client -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 2rem; background: #f9f9f9; }
+        .card { background: white; padding: 1.5rem; margin-bottom: 1.5rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        select, input, textarea, button { width: 100%; padding: 0.5rem; margin-top: 0.5rem; margin-bottom: 1rem; box-sizing: border-box; }
+        textarea { height: 100px; font-family: monospace; }
+        button { background: #0066cc; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        button:hover { background: #004999; }
+    </style>
+</head>
+<body>
+
+    <h2>🎵 Cloud Sheet Music Library</h2>
+
+    <!-- Song Selector Section -->
+    <div class="card">
+        <h3>Select a Song</h3>
+        <label for="songSelect">Choose from database:</label>
+        <select id="songSelect">
+            <option value="">-- Loading songs... --</option>
+        </select>
+        <button id="loadBtn">Render Sheet Music</button>
+    </div>
+
+    <!-- Sheet Music Display Section -->
+    <div class="card">
+        <h3 id="songTitle">Sheet Music Viewer</h3>
+        <p id="songSinger" style="color: #666; margin-top: -10px; font-style: italic;"></p>
+        <div id="paper"></div>
+    </div>
+
+    <!-- Add New Song Section -->
+    <div class="card">
+        <h3>Add a New Song</h3>
+        <label for="newTitle">Song Title:</label>
+        <input type="text" id="newTitle" placeholder="e.g. Termentahkan">
+        
+        <label for="newSinger">Singer / Artist:</label>
+        <input type="text" id="newSinger" placeholder="e.g. For Revenge">
+        
+        <label for="newAbc">ABC Notation Code:</label>
+        <textarea id="newAbc" placeholder='X: 1&#10;T: Song&#10;K: Am&#10;e2 c2 B2 cA-'></textarea>
+        
+        <button id="saveBtn">Save to Cloud Database</button>
+    </div>
+
+    <script>
+        // --- 1. CONFIGURATION ---
+        const SUPABASE_URL = 'https://wbgxgsjzuvbqqvufokaq.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndiZ3hnc2p6dXZicXF2dWZva2FxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcyMjI3MzUsImV4cCI6MjEwMjc5ODczNX0.m82XN5A8RDPAZq74qNabjM4BXyj2Jqo7fUmKbeWUAgo';
+        
+        const _supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        let songsData = [];
+
+        // --- 2. FETCH SONGS FROM SUPABASE ---
+        async function fetchSongs() {
+            // Order alphabetically by singer
+            const { data, error } = await _supabase.from('songs').select('*').order('singer', { ascending: true });
+            const selectElem = document.getElementById('songSelect');
+            
+            if (error) {
+                console.error('Error fetching songs:', error);
+                selectElem.innerHTML = '<option value="">Error loading database</option>';
+                return;
+            }
+
+            songsData = data;
+            selectElem.innerHTML = '<option value="">-- Select a song --</option>';
+            
+            songsData.forEach((song, index) => {
+                const option = document.createElement('option');
+                option.value = index;
+                // Display both Title and Singer in the dropdown
+                const singerText = song.singer ? song.singer : "Unknown Artist";
+                option.textContent = `${song.title} - ${singerText}`;
+                selectElem.appendChild(option);
+            });
+        }
+
+        // --- 3. RENDER SELECTED SONG ---
+        document.getElementById('loadBtn').addEventListener('click', () => {
+            const index = document.getElementById('songSelect').value;
+            if (index === '') return;
+
+            const selectedSong = songsData[index];
+            document.getElementById('songTitle').textContent = selectedSong.title;
+            
+            // Display singer name under the title
+            document.getElementById('songSinger').textContent = selectedSong.singer ? `by ${selectedSong.singer}` : '';
+            
+            // Clear previous render and render new ABC string
+            document.getElementById('paper').innerHTML = '';
+            ABCJS.renderAbc("paper", selectedSong.abc_code, { responsive: "resize" });
+        });
+
+        // --- 4. SAVE NEW SONG TO SUPABASE ---
+        document.getElementById('saveBtn').addEventListener('click', async () => {
+            const title = document.getElementById('newTitle').value;
+            const singer = document.getElementById('newSinger').value;
+            const abc_code = document.getElementById('newAbc').value;
+
+            if (!title || !abc_code) {
+                alert('Please fill in at least the Title and the ABC Code.');
+                return;
+            }
+
+            // Insert title, singer, and code into the database
+            const { data, error } = await _supabase
+                .from('songs')
+                .insert([{ title: title, singer: singer, abc_code: abc_code }])
+                .select();
+
+            if (error) {
+                alert('Error saving song: ' + error.message);
+            } else {
+                alert('Song saved successfully to the cloud!');
+                document.getElementById('newTitle').value = '';
+                document.getElementById('newSinger').value = '';
+                document.getElementById('newAbc').value = '';
+                fetchSongs(); // Refresh dropdown list automatically
+            }
+        });
+
+        // Load songs when the page opens
+        fetchSongs();
+    </script>
+</body>
+</html>
