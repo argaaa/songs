@@ -4,134 +4,179 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cloud Sheet Music Library</title>
-    <!-- abcjs for rendering sheet music -->
     <script src="https://cdn.jsdelivr.net/npm/abcjs@6.4.0/dist/abcjs-basic-min.js"></script>
-    <!-- Supabase JS Client -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 2rem; background: #f9f9f9; }
         .card { background: white; padding: 1.5rem; margin-bottom: 1.5rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        select, input, textarea, button { width: 100%; padding: 0.5rem; margin-top: 0.5rem; margin-bottom: 1rem; box-sizing: border-box; }
-        textarea { height: 100px; font-family: monospace; }
-        button { background: #0066cc; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .song-item { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 0; border-bottom: 1px solid #eee; }
+        .song-info { font-weight: bold; }
+        .singer-info { color: #666; font-size: 0.9em; font-weight: normal; }
+        button { background: #0066cc; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; }
         button:hover { background: #004999; }
+        button.danger { background: #cc0000; }
+        button.danger:hover { background: #990000; }
+        button.secondary { background: #666; }
+        dialog { border: none; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); padding: 2rem; width: 90%; max-width: 500px; }
+        dialog::backdrop { background: rgba(0,0,0,0.5); }
+        input, textarea { width: 100%; padding: 0.5rem; margin: 0.5rem 0 1rem 0; box-sizing: border-box; }
+        textarea { height: 120px; font-family: monospace; }
+        .modal-actions { display: flex; gap: 1rem; justify-content: flex-end; }
     </style>
 </head>
 <body>
 
     <h2>🎵 Cloud Sheet Music Library</h2>
 
-    <!-- Song Selector Section -->
+    <!-- Library Section -->
     <div class="card">
-        <h3>Select a Song</h3>
-        <label for="songSelect">Choose from database:</label>
-        <select id="songSelect">
-            <option value="">-- Loading songs... --</option>
-        </select>
-        <button id="loadBtn">Render Sheet Music</button>
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #eee; padding-bottom: 1rem; margin-bottom: 1rem;">
+            <h3 style="margin: 0;">Song Library</h3>
+            <button id="openModalBtn">Add New Song</button>
+        </div>
+        <div id="songList">Loading songs...</div>
     </div>
 
-    <!-- Sheet Music Display Section -->
-    <div class="card">
-        <h3 id="songTitle">Sheet Music Viewer</h3>
-        <p id="songSinger" style="color: #666; margin-top: -10px; font-style: italic;"></p>
+    <!-- Sheet Music Display -->
+    <div class="card" id="viewerCard" style="display: none;">
+        <h3 id="displayTitle"></h3>
+        <p id="displaySinger" style="color: #666; margin-top: -10px; font-style: italic;"></p>
         <div id="paper"></div>
     </div>
 
-    <!-- Add New Song Section -->
-    <div class="card">
-        <h3>Add a New Song</h3>
-        <label for="newTitle">Song Title:</label>
-        <input type="text" id="newTitle" placeholder="e.g. Termentahkan">
+    <!-- Add/Edit Modal -->
+    <dialog id="songModal">
+        <h3 id="modalTitle">Add New Song</h3>
+        <input type="hidden" id="songId">
         
-        <label for="newSinger">Singer / Artist:</label>
-        <input type="text" id="newSinger" placeholder="e.g. For Revenge">
+        <label>Title:</label>
+        <input type="text" id="titleInput" placeholder="Song Title">
         
-        <label for="newAbc">ABC Notation Code:</label>
-        <textarea id="newAbc" placeholder='X: 1&#10;T: Song&#10;K: Am&#10;e2 c2 B2 cA-'></textarea>
+        <label>Singer / Artist:</label>
+        <input type="text" id="singerInput" placeholder="Artist Name">
         
-        <button id="saveBtn">Save to Cloud Database</button>
-    </div>
+        <label>ABC Notation Code:</label>
+        <textarea id="abcInput" placeholder="Paste ABC code here..."></textarea>
+        
+        <div class="modal-actions">
+            <button class="secondary" id="cancelBtn">Cancel</button>
+            <button id="saveBtn">Save Song</button>
+        </div>
+    </dialog>
 
     <script>
-        // --- 1. CONFIGURATION ---
+        // --- CONFIGURATION ---
         const SUPABASE_URL = 'https://wbgxgsjzuvbqqvufokaq.supabase.co';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndiZ3hnc2p6dXZicXF2dWZva2FxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcyMjI3MzUsImV4cCI6MjEwMjc5ODczNX0.m82XN5A8RDPAZq74qNabjM4BXyj2Jqo7fUmKbeWUAgo';
-        
         const _supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-        let songsData = [];
+        const modal = document.getElementById('songModal');
+        let currentSongs = [];
 
-        // --- 2. FETCH SONGS FROM SUPABASE ---
+        // --- FETCH & RENDER LIST ---
         async function fetchSongs() {
-            // Order alphabetically by singer
-            const { data, error } = await _supabase.from('songs').select('*').order('singer', { ascending: true });
-            const selectElem = document.getElementById('songSelect');
+            const { data, error } = await _supabase.from('songs').select('*').order('title', { ascending: true });
+            const listElem = document.getElementById('songList');
             
             if (error) {
-                console.error('Error fetching songs:', error);
-                selectElem.innerHTML = '<option value="">Error loading database</option>';
+                listElem.innerHTML = 'Error loading database.';
                 return;
             }
 
-            songsData = data;
-            selectElem.innerHTML = '<option value="">-- Select a song --</option>';
+            currentSongs = data;
+            listElem.innerHTML = '';
+
+            if(data.length === 0) {
+                listElem.innerHTML = '<p style="color: #666;">No songs found. Add one!</p>';
+                return;
+            }
             
-            songsData.forEach((song, index) => {
-                const option = document.createElement('option');
-                option.value = index;
-                // Display both Title and Singer in the dropdown
-                const singerText = song.singer ? song.singer : "Unknown Artist";
-                option.textContent = `${song.title} - ${singerText}`;
-                selectElem.appendChild(option);
+            data.forEach((song, index) => {
+                const row = document.createElement('div');
+                row.className = 'song-item';
+                row.innerHTML = `
+                    <div class="song-info">${song.title} <span class="singer-info">${song.singer ? 'by ' + song.singer : ''}</span></div>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <button onclick="playSong(${index})">Play</button>
+                        <button class="secondary" onclick="openEditModal(${index})">Edit</button>
+                        <button class="danger" onclick="deleteSong(${song.id})">Delete</button>
+                    </div>
+                `;
+                listElem.appendChild(row);
             });
         }
 
-        // --- 3. RENDER SELECTED SONG ---
-        document.getElementById('loadBtn').addEventListener('click', () => {
-            const index = document.getElementById('songSelect').value;
-            if (index === '') return;
-
-            const selectedSong = songsData[index];
-            document.getElementById('songTitle').textContent = selectedSong.title;
-            
-            // Display singer name under the title
-            document.getElementById('songSinger').textContent = selectedSong.singer ? `by ${selectedSong.singer}` : '';
-            
-            // Clear previous render and render new ABC string
+        // --- PLAY SONG ---
+        window.playSong = function(index) {
+            const song = currentSongs[index];
+            document.getElementById('viewerCard').style.display = 'block';
+            document.getElementById('displayTitle').textContent = song.title;
+            document.getElementById('displaySinger').textContent = song.singer ? `by ${song.singer}` : '';
             document.getElementById('paper').innerHTML = '';
-            ABCJS.renderAbc("paper", selectedSong.abc_code, { responsive: "resize" });
+            ABCJS.renderAbc("paper", song.abc_code, { responsive: "resize" });
+        }
+
+        // --- DELETE SONG ---
+        window.deleteSong = async function(id) {
+            if(!confirm("Are you sure you want to delete this song?")) return;
+            
+            const { error } = await _supabase.from('songs').delete().eq('id', id);
+            if (error) alert('Error deleting: ' + error.message);
+            else fetchSongs();
+        }
+
+        // --- MODAL LOGIC (ADD & EDIT) ---
+        document.getElementById('openModalBtn').addEventListener('click', () => {
+            document.getElementById('modalTitle').textContent = 'Add New Song';
+            document.getElementById('songId').value = '';
+            document.getElementById('titleInput').value = '';
+            document.getElementById('singerInput').value = '';
+            document.getElementById('abcInput').value = '';
+            modal.showModal();
         });
 
-        // --- 4. SAVE NEW SONG TO SUPABASE ---
+        window.openEditModal = function(index) {
+            const song = currentSongs[index];
+            document.getElementById('modalTitle').textContent = 'Edit Song';
+            document.getElementById('songId').value = song.id;
+            document.getElementById('titleInput').value = song.title;
+            document.getElementById('singerInput').value = song.singer || '';
+            document.getElementById('abcInput').value = song.abc_code;
+            modal.showModal();
+        }
+
+        document.getElementById('cancelBtn').addEventListener('click', () => modal.close());
+
         document.getElementById('saveBtn').addEventListener('click', async () => {
-            const title = document.getElementById('newTitle').value;
-            const singer = document.getElementById('newSinger').value;
-            const abc_code = document.getElementById('newAbc').value;
+            const id = document.getElementById('songId').value;
+            const title = document.getElementById('titleInput').value;
+            const singer = document.getElementById('singerInput').value;
+            const abc_code = document.getElementById('abcInput').value;
 
-            if (!title || !abc_code) {
-                alert('Please fill in at least the Title and the ABC Code.');
-                return;
+            if (!title || !abc_code) return alert('Title and ABC code are required.');
+
+            const payload = { title, singer, abc_code };
+            let error;
+
+            if (id) {
+                // Update existing record
+                const res = await _supabase.from('songs').update(payload).eq('id', id);
+                error = res.error;
+            } else {
+                // Insert new record
+                const res = await _supabase.from('songs').insert([payload]);
+                error = res.error;
             }
-
-            // Insert title, singer, and code into the database
-            const { data, error } = await _supabase
-                .from('songs')
-                .insert([{ title: title, singer: singer, abc_code: abc_code }])
-                .select();
 
             if (error) {
-                alert('Error saving song: ' + error.message);
+                alert('Error saving: ' + error.message);
             } else {
-                alert('Song saved successfully to the cloud!');
-                document.getElementById('newTitle').value = '';
-                document.getElementById('newSinger').value = '';
-                document.getElementById('newAbc').value = '';
-                fetchSongs(); // Refresh dropdown list automatically
+                modal.close();
+                fetchSongs();
             }
         });
 
-        // Load songs when the page opens
+        // Initialize App
         fetchSongs();
     </script>
 </body>
